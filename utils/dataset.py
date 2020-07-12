@@ -89,7 +89,8 @@ def _parse_fn(example_serialized, is_training):
 
 def get_dataset(tfrecords_dir, subset, batch_size):
     """Read TFRecords files and turn them into a TFRecordDataset."""
-    files = tf.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
+    # files = tf.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
+    files = tf.compat.v1.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
     shards = tf.data.Dataset.from_tensor_slices(files)
     shards = shards.shuffle(tf.cast(tf.shape(files)[0], tf.int64))
     shards = shards.repeat()

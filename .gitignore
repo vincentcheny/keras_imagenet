@@ -10,3 +10,5 @@ saves
 *.onnx
 *.engine
 *.bin
+
+tmp*

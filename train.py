@@ -5,6 +5,7 @@ This script is used to train the ImageNet models.
 
 
 import os
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1"
 import time
 import argparse
 
@@ -72,27 +73,32 @@ def train(model_name, dropout_rate, optim_name, epsilon,
     tensorboard = tf.keras.callbacks.TensorBoard(
         log_dir='{}/{}'.format(config.LOG_DIR, time.time()))
 
-    # build model and do training
-    model = get_training_model(
-        model_name=model_name,
-        dropout_rate=dropout_rate,
-        optimizer=optimizer,
-        label_smoothing=label_smoothing,
-        use_lookahead=use_lookahead,
-        iter_size=iter_size,
-        weight_decay=weight_decay)
+    mirrored_strategy = tf.distribute.MirroredStrategy()
+    with mirrored_strategy.scope():
+        # build model and do training
+        model = get_training_model(
+            model_name=model_name,
+            dropout_rate=dropout_rate,
+            optimizer=optimizer,
+            label_smoothing=label_smoothing,
+            use_lookahead=use_lookahead,
+            iter_size=iter_size,
+            weight_decay=weight_decay)
     model.fit(
         x=ds_train,
-        steps_per_epoch=1281167 // batch_size,
-        validation_data=ds_valid,
-        validation_steps=50000 // batch_size,
-        callbacks=[lrate, model_ckpt, tensorboard],
+        # steps_per_epoch=1281167 // batch_size,
+        steps_per_epoch=1281167 // 20 // batch_size,
+        # validation_data=ds_valid,
+        # validation_steps=50000 // batch_size,
+        # validation_steps=10,
+        # callbacks=[lrate, model_ckpt, tensorboard],
+        callbacks=[lrate],
         # The following doesn't seem to help in terms of speed.
         # use_multiprocessing=True, workers=4,
         epochs=epochs)
 
     # training finished
-    model.save('{}/{}-model-final.h5'.format(config.SAVE_DIR, save_name))
+    # model.save('{}/{}-model-final.h5'.format(config.SAVE_DIR, save_name))
 
 
 def main():
@@ -103,7 +109,7 @@ def main():
     parser.add_argument('--optimizer', type=str, default='adam',
                         choices=['sgd', 'adam', 'rmsprop'])
     parser.add_argument('--epsilon', type=float, default=1e-1)
-    parser.add_argument('--label_smoothing', action='store_true')
+    parser.add_argument('--label_smoothing', action='store_false')
     parser.add_argument('--use_lookahead', action='store_true')
     parser.add_argument('--batch_size', type=int, default=-1)
     parser.add_argument('--iter_size', type=int, default=-1)

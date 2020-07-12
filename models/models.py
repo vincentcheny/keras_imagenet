@@ -217,6 +217,6 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
         optimizer=optimizer,
         loss=loss,
         metrics=['accuracy'])
-    print(model.summary())
+    # print(model.summary())
 
     return model
