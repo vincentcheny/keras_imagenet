@@ -3,8 +3,19 @@
 Commond utils functions for TensorFlow & Keras.
 """
 
-
+import os
+import random
+import numpy as np
 import tensorflow as tf
+
+def fix_randomness():
+    seed_value=0
+    os.environ['PYTHONHASHSEED']=str(seed_value)
+    random.seed(seed_value)
+    np.random.seed(seed_value)
+    print(np.random.rand())
+    np.random.seed(seed_value)
+    tf.compat.v1.set_random_seed(seed_value)
 
 
 def config_keras_backend(params=None):

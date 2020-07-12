@@ -2,15 +2,25 @@
 
 This script is used to train the ImageNet models.
 """
-
-
-import os
-import time
-import argparse
-
+import numpy as np
+from utils.utils import fix_randomness
+fix_randomness()
+# print(np.random.rand())
+# exit(0)
+# seed_value=0
+# import os
+# os.environ['PYTHONHASHSEED']=str(seed_value)
+# import numpy as np
+# np.random.seed(seed_value)
+# import random
+# random.seed(seed_value)
 import tensorflow as tf
+# tf.compat.v1.set_random_seed(seed_value)
 from tensorflow.keras.callbacks import Callback
 from tensorflow.python.keras import backend as K
+
+import time
+import argparse
 
 from config import config
 from utils.utils import config_keras_backend, clear_keras_session
@@ -63,7 +73,7 @@ def train(model_name,
           initial_lr, 
           final_lr,
           weight_decay, 
-          steps, 
+          total_img, 
           dataset_dir):
     """Prepare data and train the model."""
     
@@ -89,6 +99,7 @@ def train(model_name,
         weight_decay=weight_decay)
 
     start = time.time()
+    steps = total_img // batch_size
     his = model.fit(
         x=ds_train,
         steps_per_epoch=steps,
@@ -109,6 +120,7 @@ def train(model_name,
 
 
 def runtime_eval(x):
+    print(x)
     config_keras_backend(x[6:])
     # config_keras_backend()
     acc,spent_time = train(model_name, 
@@ -123,7 +135,7 @@ def runtime_eval(x):
                             x[2], #init LR
                             x[3], #final LR
                             x[4], #weight decay
-                            x[5], #steps
+                            x[5], #total_img
                             datadir)
     clear_keras_session()
     global final_acc
@@ -184,7 +196,8 @@ batch_list = [8,16,32,48,64]
 init_LR_list = [1,5e-1,3e-1,1e-1,7e-2,5e-2,3e-2,1e-2]
 final_LR_list = [5e-4,1e-4,5e-5,1e-5,5e-6,1e-6]
 weight_decay_list = [2e-3,7e-4,2e-4,7e-5,2e-5]
-steps_list = [200,300,400]
+# steps_list = [200,300,400]
+total_img_list = [563200,640000,768000]
 
 
 
@@ -206,7 +219,7 @@ domain_vars = [{'type': 'discrete_numeric', 'items': epsilon_list},
                 {'type': 'discrete_numeric', 'items': init_LR_list},
                 {'type': 'discrete_numeric', 'items': final_LR_list},
                 {'type': 'discrete_numeric', 'items': weight_decay_list},
-                {'type': 'discrete_numeric', 'items': steps_list},
+                {'type': 'discrete_numeric', 'items': total_img_list},
                 {'type': 'discrete_numeric', 'items': inter_list},
                 {'type': 'discrete_numeric', 'items': intra_list},
                 {'type': 'discrete_numeric', 'items': build_cost_model_list},
@@ -222,16 +235,16 @@ domain_vars = [{'type': 'discrete_numeric', 'items': epsilon_list},
 dragonfly_args = [ 
   get_option_specs('report_results_every', False, 2, 'Path to the json or pb config file. '),
   get_option_specs('init_capital', False, None, 'Path to the json or pb config file. '),
-  get_option_specs('init_capital_frac', False, 0.15, 'Path to the json or pb config file. '),
+  get_option_specs('init_capital_frac', False, 0.05, 'Path to the json or pb config file. '),
   get_option_specs('num_init_evals', False, 2, 'Path to the json or pb config file. ')]
 
 options = load_options(dragonfly_args)
 config_params = {'domain': domain_vars}
 config = load_config(config_params)
-max_num_evals = 60 * 60 * 3
+max_num_evals = 60 * 60 * 20
 moo_objectives = [runtime_eval, acc_eval]
 pareto_opt_vals, pareto_opt_pts, history = multiobjective_maximise_functions(moo_objectives, config.domain,max_num_evals,capital_type='realtime',config=config,options=options)
-f = open("./googlenet_bn-1gpu-dragonfly-3h-500step-output.log","w+")
+f = open("./googlenet_bn-1gpu-dragonfly-20h-output.log","w+")
 print(pareto_opt_pts,file=f)
 print("\n",file=f)
 print(pareto_opt_vals,file=f)
