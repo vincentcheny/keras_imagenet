@@ -13,6 +13,8 @@ Implemented models:
 
 
 import tensorflow as tf
+from tensorflow.keras.callbacks import Callback
+from tensorflow.python.keras import backend as K
 
 from config import config
 from .googlenet import GoogLeNetBN
@@ -131,6 +133,39 @@ def get_lr_func(total_epochs, lr_sched='linear',
     else:
         raise ValueError('bad lr_sched')
 
+
+def get_customize_lr_callback(*args, **kwargs):
+    class CustomizedLearningRateScheduler(Callback):
+        def __init__(self, model, total_step, initial_lr, final_lr, update_interval=100, decay_type="linear"):
+            self.model = model
+            self.total_step = total_step
+            self.initial_lr = initial_lr
+            self.final_lr = final_lr
+            self.update_interval = update_interval
+            self.decay_type = decay_type
+
+        def on_train_batch_end(self, batch, logs=None):
+            if batch % self.update_interval == 0:
+                if not hasattr(self.model.optimizer, 'lr'):
+                    raise ValueError('Optimizer must have a "lr" attribute.')
+                try:  # new API
+                    lr = float(K.get_value(self.model.optimizer.lr))
+                    if batch < 100:
+                        lr = self.initial_lr
+                    else:
+                        if self.decay_type == "exp":
+                            lr_decay = (self.final_lr / self.initial_lr) ** (1. / (self.total_step - 1))
+                            lr = self.initial_lr * (lr_decay ** batch)
+                        else:
+                            ratio = max((self.total_step - batch - 1.) / (self.total_step - 1.), 0.)
+                            lr = self.final_lr + (self.initial_lr - self.final_lr) * ratio
+                        print(f'\n[UPDATE] Step {batch+1}, lr = {lr}')
+                except TypeError:  # Support for old API for backward compatibility
+                    lr = self.initial_lr
+                    print(f"There is a TypeError: {TypeError}")
+                K.set_value(self.model.optimizer.lr, lr)
+
+    return CustomizedLearningRateScheduler(*args, **kwargs)
 
 def get_weight_decay(model_name, value):
     return value if value >= 0. else 1e-5

@@ -2,7 +2,7 @@
 #SBATCH --job-name=imagenet
 #SBATCH --mail-type=FAIL #NONE, BEGIN, END, FAIL, REQUEUE, ALL
 #SBATCH --mail-user=cy0906@163.com
-#SBATCH --output=/lustre/project/EricLo/chen.yu/imagenet-log/googlenet_bn-1gpu-dragonfly-3h-500step.log
+#SBATCH --output=/lustre/project/EricLo/chen.yu/imagenet-log/googlenet_bn-dragonfly-test.log
 #SBATCH --gres=gpu:1
 #SBATCH --mem=10000
 
@@ -38,8 +38,8 @@ case $1 in
                          --epochs 1 resnet50
         ;;
     googlenet_bn )
-        python3 train.py --dropout_rate 0.4 --weight_decay 2e-4 \
-                         --optimizer adam --batch_size 64 --iter_size 1 \
+        python3 train-dragonfly.py --dropout_rate 0.4 --weight_decay 2e-4 \
+                         --optimizer adam --batch_size 8 --iter_size 1 \
                          --lr_sched exp --initial_lr 1e-2 --final_lr 1e-5 \
                          --epochs 1 googlenet_bn
         ;;

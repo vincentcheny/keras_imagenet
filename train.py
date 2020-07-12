@@ -5,11 +5,12 @@ This script is used to train the ImageNet models.
 
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="0,1"
 import time
 import argparse
 
 import tensorflow as tf
+from tensorflow.keras.callbacks import Callback
+from tensorflow.python.keras import backend as K
 
 from config import config
 from utils.utils import config_keras_backend, clear_keras_session
@@ -22,6 +23,9 @@ from models.models import get_final_lr
 from models.models import get_weight_decay
 from models.models import get_optimizer
 from models.models import get_training_model
+from models.models import get_customize_lr_callback
+
+import nni
 
 
 DESCRIPTION = """For example:
@@ -49,7 +53,7 @@ SUPPORTED_MODELS = (
 def train(model_name, dropout_rate, optim_name, epsilon,
           label_smoothing, use_lookahead, batch_size, iter_size,
           lr_sched, initial_lr, final_lr,
-          weight_decay, epochs, dataset_dir):
+          weight_decay, steps, dataset_dir):
     """Prepare data and train the model."""
     batch_size   = get_batch_size(model_name, batch_size)
     iter_size    = get_iter_size(model_name, iter_size)
@@ -62,41 +66,57 @@ def train(model_name, dropout_rate, optim_name, epsilon,
     ds_train = get_dataset(dataset_dir, 'train', batch_size)
     ds_valid = get_dataset(dataset_dir, 'validation', batch_size)
 
-    # instantiate training callbacks
-    lrate = get_lr_func(epochs, lr_sched, initial_lr, final_lr)
-    save_name = model_name if not model_name.endswith('.h5') else \
-                os.path.split(model_name)[-1].split('.')[0].split('-')[0]
-    model_ckpt = tf.keras.callbacks.ModelCheckpoint(
-        os.path.join(config.SAVE_DIR, save_name) + '-ckpt-{epoch:03d}.h5',
-        monitor='val_loss',
-        save_best_only=True)
-    tensorboard = tf.keras.callbacks.TensorBoard(
-        log_dir='{}/{}'.format(config.LOG_DIR, time.time()))
+    # build model and do training
+    model = get_training_model(
+        model_name=model_name,
+        dropout_rate=dropout_rate,
+        optimizer=optimizer,
+        label_smoothing=label_smoothing,
+        use_lookahead=use_lookahead,
+        iter_size=iter_size,
+        weight_decay=weight_decay)
+    
+    class CustomizedLearningRateScheduler(Callback):
+        def __init__(self, model, total_step, initial_lr, final_lr, update_interval=100, decay_type="linear"):
+            self.model = model
+            self.total_step = total_step
+            self.initial_lr = initial_lr
+            self.final_lr = final_lr
+            self.update_interval = update_interval
+            self.decay_type = decay_type
 
-    mirrored_strategy = tf.distribute.MirroredStrategy()
-    with mirrored_strategy.scope():
-        # build model and do training
-        model = get_training_model(
-            model_name=model_name,
-            dropout_rate=dropout_rate,
-            optimizer=optimizer,
-            label_smoothing=label_smoothing,
-            use_lookahead=use_lookahead,
-            iter_size=iter_size,
-            weight_decay=weight_decay)
-    model.fit(
+        def on_train_batch_end(self, batch, logs=None):
+            if batch % self.update_interval == 0:
+                if not hasattr(self.model.optimizer, 'lr'):
+                    raise ValueError('Optimizer must have a "lr" attribute.')
+                try:  # new API
+                    lr = float(K.get_value(self.model.optimizer.lr))
+                    if batch < 100:
+                        lr = self.initial_lr
+                    else:
+                        if self.decay_type == "exp":
+                            lr_decay = (self.final_lr / self.initial_lr) ** (1. / (self.total_step - 1))
+                            lr = self.initial_lr * (lr_decay ** batch)
+                        else:
+                            ratio = max((self.total_step - batch - 1.) / (self.total_step - 1.), 0.)
+                            lr = self.final_lr + (self.initial_lr - self.final_lr) * ratio
+                        print(f'\n[UPDATE] Step {batch+1}, lr = {lr}')
+                except TypeError:  # Support for old API for backward compatibility
+                    lr = self.initial_lr
+                    print(f"There is a TypeError: {TypeError}")
+                K.set_value(self.model.optimizer.lr, lr)
+
+
+    his = model.fit(
         x=ds_train,
-        # steps_per_epoch=1281167 // batch_size,
-        steps_per_epoch=1281167 // 20 // batch_size,
-        # validation_data=ds_valid,
-        # validation_steps=50000 // batch_size,
-        # validation_steps=10,
-        # callbacks=[lrate, model_ckpt, tensorboard],
-        callbacks=[lrate],
+        steps_per_epoch=steps,
+        callbacks=[CustomizedLearningRateScheduler(model,steps,initial_lr,final_lr)],
         # The following doesn't seem to help in terms of speed.
         # use_multiprocessing=True, workers=4,
-        epochs=epochs)
-
+        epochs=1)
+    final_acc = his.history['acc'][0]
+    print(f"Final acc:{final_acc}")
+    nni.report_final_result(final_acc)
     # training finished
     # model.save('{}/{}-model-final.h5'.format(config.SAVE_DIR, save_name))
 
@@ -129,14 +149,58 @@ def main():
 
     os.makedirs(config.SAVE_DIR, exist_ok=True)
     os.makedirs(config.LOG_DIR, exist_ok=True)
-    config_keras_backend()
-    train(args.model, args.dropout_rate, args.optimizer, args.epsilon,
-          args.label_smoothing, args.use_lookahead,
-          args.batch_size, args.iter_size,
-          args.lr_sched, args.initial_lr, args.final_lr,
-          args.weight_decay, args.epochs, args.dataset_dir)
+    hardware_para = [
+        params["inter_op_parallelism_threads"],
+        params["intra_op_parallelism_threads"],
+        params["max_folded_constant"],
+        params["build_cost_model"],
+        params["do_common_subexpression_elimination"],
+        params["do_function_inlining"],
+        params["global_jit_level"],
+        params["infer_shapes"],
+        params["place_pruned_graph"],
+        params["enable_bfloat16_sendrecv"],
+    ]
+    config_keras_backend(hardware_para)
+    train(args.model,
+        0, #drop out rate
+        'adam', #optimizer
+        params["EPSILON"],
+        args.label_smoothing, 
+        args.use_lookahead,
+        params["BATCH_SIZE"],
+        args.iter_size,
+        args.lr_sched, 
+        params["INIT_LR"],
+        params["FINAL_LR"],
+        params["WEIGHT_DECAY"],
+        params["NUM_STEPS"],
+        args.dataset_dir)
     clear_keras_session()
 
 
+def get_default_params():
+    return {
+        "EPSILON":0.5,
+        "BATCH_SIZE":16,
+        "INIT_LR":1,
+        "FINAL_LR":5e-4,
+        'WEIGHT_DECAY':2e-4,
+        'NUM_STEPS':500,
+		"inter_op_parallelism_threads":1,
+        "intra_op_parallelism_threads":2,
+        "max_folded_constant":6,
+        "build_cost_model":4,
+        "do_common_subexpression_elimination":1,
+        "do_function_inlining":1,
+        "global_jit_level":1,
+        "infer_shapes":1,
+        "place_pruned_graph":1,
+        "enable_bfloat16_sendrecv":1
+    }
+
 if __name__ == '__main__':
+    params = get_default_params()
+    tuned_params = nni.get_next_parameter()
+    params.update(tuned_params)
     main()

@@ -92,10 +92,10 @@ def get_dataset(tfrecords_dir, subset, batch_size):
     # files = tf.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
     files = tf.compat.v1.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
     shards = tf.data.Dataset.from_tensor_slices(files)
-    shards = shards.shuffle(tf.cast(tf.shape(files)[0], tf.int64))
+    shards = shards.shuffle(tf.cast(tf.shape(files)[0], tf.int64),seed=0)
     shards = shards.repeat()
     dataset = shards.interleave(tf.data.TFRecordDataset, cycle_length=4)
-    dataset = dataset.shuffle(buffer_size=8192)
+    dataset = dataset.shuffle(buffer_size=8192,seed=0)
     parser = partial(
         _parse_fn, is_training=True if subset == 'train' else False)
     dataset = dataset.apply(
