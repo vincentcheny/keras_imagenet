@@ -3,14 +3,15 @@
 This script is used to train the ImageNet models.
 """
 
-
+import numpy as np
+from utils.utils import fix_randomness
+fix_randomness()
 import os
+os.environ["CUDA_VISIBLE_DEVICES"]="0,1"
 import time
 import argparse
 
 import tensorflow as tf
-from tensorflow.keras.callbacks import Callback
-from tensorflow.python.keras import backend as K
 
 from config import config
 from utils.utils import config_keras_backend, clear_keras_session
@@ -53,7 +54,7 @@ SUPPORTED_MODELS = (
 def train(model_name, dropout_rate, optim_name, epsilon,
           label_smoothing, use_lookahead, batch_size, iter_size,
           lr_sched, initial_lr, final_lr,
-          weight_decay, steps, dataset_dir):
+          weight_decay, total_img, dataset_dir):
     """Prepare data and train the model."""
     batch_size   = get_batch_size(model_name, batch_size)
     iter_size    = get_iter_size(model_name, iter_size)
@@ -66,6 +67,17 @@ def train(model_name, dropout_rate, optim_name, epsilon,
     ds_train = get_dataset(dataset_dir, 'train', batch_size)
     ds_valid = get_dataset(dataset_dir, 'validation', batch_size)
 
+    # from models.adamw import AdamW
+    # model = tf.keras.models.load_model(
+    #     model_name,
+    #     compile=False,
+    #     custom_objects={'AdamW': AdamW})
+    # model_weights = model.get_weights()
+    # opt_weights = model.optimizer.get_weights()
+    
+
+    # mirrored_strategy = tf.distribute.MirroredStrategy()
+    # with mirrored_strategy.scope():
     # build model and do training
     model = get_training_model(
         model_name=model_name,
@@ -76,49 +88,39 @@ def train(model_name, dropout_rate, optim_name, epsilon,
         iter_size=iter_size,
         weight_decay=weight_decay)
     
-    class CustomizedLearningRateScheduler(Callback):
-        def __init__(self, model, total_step, initial_lr, final_lr, update_interval=100, decay_type="linear"):
-            self.model = model
-            self.total_step = total_step
-            self.initial_lr = initial_lr
-            self.final_lr = final_lr
-            self.update_interval = update_interval
-            self.decay_type = decay_type
 
-        def on_train_batch_end(self, batch, logs=None):
-            if batch % self.update_interval == 0:
-                if not hasattr(self.model.optimizer, 'lr'):
-                    raise ValueError('Optimizer must have a "lr" attribute.')
-                try:  # new API
-                    lr = float(K.get_value(self.model.optimizer.lr))
-                    if batch < 100:
-                        lr = self.initial_lr
-                    else:
-                        if self.decay_type == "exp":
-                            lr_decay = (self.final_lr / self.initial_lr) ** (1. / (self.total_step - 1))
-                            lr = self.initial_lr * (lr_decay ** batch)
-                        else:
-                            ratio = max((self.total_step - batch - 1.) / (self.total_step - 1.), 0.)
-                            lr = self.final_lr + (self.initial_lr - self.final_lr) * ratio
-                        print(f'\n[UPDATE] Step {batch+1}, lr = {lr}')
-                except TypeError:  # Support for old API for backward compatibility
-                    lr = self.initial_lr
-                    print(f"There is a TypeError: {TypeError}")
-                K.set_value(self.model.optimizer.lr, lr)
+    class LoadWeightsCallback(tf.keras.callbacks.Callback):
+        _chief_worker_only = False
 
+        def __init__(self, weights, optimizer_weights):
+            # self.model = model
+            self.weights = weights
+            self.optimizer_weights = optimizer_weights
 
+        def on_train_begin(self, logs=None):
+            pass
+            if self.weights != []:
+                for idx in range(len(self.model.layers)):
+                    self.model.layers[idx].set_weights(self.weights[idx])
+            if self.optimizer_weights != []:
+                self.model.optimizer.set_weights(self.optimizer_weights)
+
+    steps = total_img // batch_size // 2
+    steps = 100
     his = model.fit(
         x=ds_train,
         steps_per_epoch=steps,
-        callbacks=[CustomizedLearningRateScheduler(model,steps,initial_lr,final_lr)],
+        callbacks=[get_customize_lr_callback(model,steps,initial_lr,final_lr)],
         # The following doesn't seem to help in terms of speed.
         # use_multiprocessing=True, workers=4,
-        epochs=1)
+        epochs=2,
+        verbose=1)
     final_acc = his.history['acc'][0]
     print(f"Final acc:{final_acc}")
     nni.report_final_result(final_acc)
     # training finished
-    # model.save('{}/{}-model-final.h5'.format(config.SAVE_DIR, save_name))
+    # model.save('googlenet_bn-2gpu-model-final.h5')
+
 
 
 def main():
@@ -149,19 +151,9 @@ def main():
 
     os.makedirs(config.SAVE_DIR, exist_ok=True)
     os.makedirs(config.LOG_DIR, exist_ok=True)
-    hardware_para = [
-        params["inter_op_parallelism_threads"],
-        params["intra_op_parallelism_threads"],
-        params["max_folded_constant"],
-        params["build_cost_model"],
-        params["do_common_subexpression_elimination"],
-        params["do_function_inlining"],
-        params["global_jit_level"],
-        params["infer_shapes"],
-        params["place_pruned_graph"],
-        params["enable_bfloat16_sendrecv"],
-    ]
-    config_keras_backend(hardware_para)
+    config_keras_backend()
+    # check if running hyperband
+    num_img = params["NUM_IMG"] if 'TRIAL_BUDGET' not in params.keys() else params["TRIAL_BUDGET"]*80000
     train(args.model,
         0, #drop out rate
         'adam', #optimizer
@@ -174,7 +166,7 @@ def main():
         params["INIT_LR"],
         params["FINAL_LR"],
         params["WEIGHT_DECAY"],
-        params["NUM_STEPS"],
+        num_img,
         args.dataset_dir)
     clear_keras_session()
 
@@ -182,24 +174,15 @@ def main():
 def get_default_params():
     return {
         "EPSILON":0.5,
-        "BATCH_SIZE":16,
+        "BATCH_SIZE":64,
         "INIT_LR":1,
         "FINAL_LR":5e-4,
         'WEIGHT_DECAY':2e-4,
-        'NUM_STEPS':500,
-		"inter_op_parallelism_threads":1,
-        "intra_op_parallelism_threads":2,
-        "max_folded_constant":6,
-        "build_cost_model":4,
-        "do_common_subexpression_elimination":1,
-        "do_function_inlining":1,
-        "global_jit_level":1,
-        "infer_shapes":1,
-        "place_pruned_graph":1,
-        "enable_bfloat16_sendrecv":1
+        'NUM_IMG':64000
     }
 
 if __name__ == '__main__':
+    tf.logging.set_verbosity(tf.logging.ERROR)
     params = get_default_params()
     tuned_params = nni.get_next_parameter()
     params.update(tuned_params)

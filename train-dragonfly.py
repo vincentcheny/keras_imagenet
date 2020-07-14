@@ -5,17 +5,7 @@ This script is used to train the ImageNet models.
 import numpy as np
 from utils.utils import fix_randomness
 fix_randomness()
-# print(np.random.rand())
-# exit(0)
-# seed_value=0
-# import os
-# os.environ['PYTHONHASHSEED']=str(seed_value)
-# import numpy as np
-# np.random.seed(seed_value)
-# import random
-# random.seed(seed_value)
 import tensorflow as tf
-# tf.compat.v1.set_random_seed(seed_value)
 from tensorflow.keras.callbacks import Callback
 from tensorflow.python.keras import backend as K
 
@@ -38,6 +28,8 @@ from models.models import get_customize_lr_callback
 from dragonfly import load_config, multiobjective_maximise_functions,multiobjective_minimise_functions
 from dragonfly import maximise_function,minimise_function
 from dragonfly.utils.option_handler import get_option_specs, load_options
+# import warnings
+# warnings.simplefilter("ignore", category=DeprecationWarning)
 
 DESCRIPTION = """For example:
 $ python3 train.py --dataset_dir  ${HOME}/data/ILSVRC2012/tfrecords \
@@ -86,7 +78,7 @@ def train(model_name,
 
     # get training and validation data
     ds_train = get_dataset(dataset_dir, 'train', batch_size)
-    ds_valid = get_dataset(dataset_dir, 'val', batch_size)
+    ds_valid = get_dataset(dataset_dir, 'validation', batch_size)
 
     # build model and do training
     model = get_training_model(
@@ -107,7 +99,7 @@ def train(model_name,
         # The following doesn't seem to help in terms of speed.
         # use_multiprocessing=True, workers=4,
         epochs=1,
-        verbose=1)
+        verbose=2)
     end = time.time()
     spent = (end - start) / 3600.0
     print(spent)
@@ -196,7 +188,6 @@ batch_list = [8,16,32,48,64]
 init_LR_list = [1,5e-1,3e-1,1e-1,7e-2,5e-2,3e-2,1e-2]
 final_LR_list = [5e-4,1e-4,5e-5,1e-5,5e-6,1e-6]
 weight_decay_list = [2e-3,7e-4,2e-4,7e-5,2e-5]
-# steps_list = [200,300,400]
 total_img_list = [563200,640000,768000]
 
 
@@ -204,7 +195,6 @@ total_img_list = [563200,640000,768000]
 #hardware para
 inter_list = [1,2,3,4]
 intra_list = [2,4,6,8,10,12]
-build_cost_model_list = [0,2,4,6,8]
 infer_shapes_list = [True,False]
 place_pruned_graph_list = [True,False]
 enable_bfloat16_sendrecv_list = [True,False]
@@ -222,7 +212,6 @@ domain_vars = [{'type': 'discrete_numeric', 'items': epsilon_list},
                 {'type': 'discrete_numeric', 'items': total_img_list},
                 {'type': 'discrete_numeric', 'items': inter_list},
                 {'type': 'discrete_numeric', 'items': intra_list},
-                {'type': 'discrete_numeric', 'items': build_cost_model_list},
                 {'type': 'discrete', 'items': infer_shapes_list},
                 {'type': 'discrete', 'items': place_pruned_graph_list},
                 {'type': 'discrete', 'items': enable_bfloat16_sendrecv_list},
@@ -241,10 +230,10 @@ dragonfly_args = [
 options = load_options(dragonfly_args)
 config_params = {'domain': domain_vars}
 config = load_config(config_params)
-max_num_evals = 60 * 60 * 20
+max_num_evals = 60 * 60 * 10
 moo_objectives = [runtime_eval, acc_eval]
 pareto_opt_vals, pareto_opt_pts, history = multiobjective_maximise_functions(moo_objectives, config.domain,max_num_evals,capital_type='realtime',config=config,options=options)
-f = open("./googlenet_bn-1gpu-dragonfly-20h-output.log","w+")
+f = open("./googlenet_bn-1gpu-dragonfly-10h-output.log","w+")
 print(pareto_opt_pts,file=f)
 print("\n",file=f)
 print(pareto_opt_vals,file=f)

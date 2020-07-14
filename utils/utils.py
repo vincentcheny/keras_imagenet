@@ -21,16 +21,25 @@ def fix_randomness():
 def config_keras_backend(params=None):
     print(f"params:{params}")
     """Config tensorflow backend to use less GPU memory."""
-    if not params or len(params) < 10:
+    if not params or len(params) < 9:
         print("\nUse default hardware config.")
         config = tf.ConfigProto()
     else:
-        # pass
-        config = tf.compat.v1.ConfigProto(
+        config = tf.ConfigProto(
+            allow_soft_placement=True,
             inter_op_parallelism_threads=int(params[0]),
-            intra_op_parallelism_threads=int(params[1]))
+            intra_op_parallelism_threads=int(params[1]),
+            graph_options=tf.compat.v1.GraphOptions(
+                infer_shapes=params[2],
+                place_pruned_graph=params[3],
+                enable_bfloat16_sendrecv=params[4],
+                optimizer_options=tf.compat.v1.OptimizerOptions(
+                    do_common_subexpression_elimination=params[5],
+                    max_folded_constant_in_bytes=params[6],
+                    do_function_inlining=params[7],
+                    global_jit_level=params[8])))
     config.gpu_options.allow_growth = True
-    session = tf.Session(config=config)
+    session = tf.compat.v1.Session(config=config)
     tf.keras.backend.set_session(session)
 
 

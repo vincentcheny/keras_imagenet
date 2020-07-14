@@ -1,10 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=imagenet
-#SBATCH --mail-type=FAIL #NONE, BEGIN, END, FAIL, REQUEUE, ALL
+#SBATCH --job-name=imagenetDF
+#SBATCH --mail-type=NONE #NONE, BEGIN, END, FAIL, REQUEUE, ALL
 #SBATCH --mail-user=cy0906@163.com
-#SBATCH --output=/lustre/project/EricLo/chen.yu/imagenet-log/googlenet_bn-dragonfly-test.log
-#SBATCH --gres=gpu:1
-#SBATCH --mem=10000
+#SBATCH --output=/lustre/project/EricLo/chen.yu/multigpu.log  # imagenet-log/googlenet_bn-dragonfly-official-1gpu.log
+#SBATCH --gres=gpu:2
+#SBATCH --mem=20G
+#SBATCH --mem-per-cpu=10G
+#SBATCH --nodelist=chpc-gpu001
+
 
 set -e
 
@@ -25,6 +28,12 @@ if [ $# -ne 1 ]; then
 fi
 
 case $1 in
+    dragonfly )
+        python train-dragonfly.py  --iter_size 1 --lr_sched exp  googlenet_bn-model-final.h5 
+        ;;
+    nni )
+        python train.py  --iter_size 1 --lr_sched exp  googlenet_bn-2gpu-model-final.h5
+        ;;
     mobilenet_v2 )
         python3 train.py --dropout_rate 0.2 --weight_decay 3e-5 \
                          --optimizer adam --batch_size 64 --iter_size 1 \

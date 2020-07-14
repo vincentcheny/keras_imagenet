@@ -48,10 +48,10 @@ def _set_l2(model, weight_decay):
         elif isinstance(layer, tf.keras.layers.Dense):
             layer.add_loss(
                 tf.keras.regularizers.l2(weight_decay)(layer.kernel))
-        #elif isinstance(layer, tf.keras.layers.BatchNormalization):
-        #    if layer.gamma is not None:
-        #        layer.add_loss(
-        #            tf.keras.regularizers.l2(weight_decay)(layer.gamma))
+        elif isinstance(layer, tf.keras.layers.BatchNormalization):
+           if layer.gamma is not None:
+               layer.add_loss(
+                   tf.keras.regularizers.l2(weight_decay)(layer.gamma))
 
 
 def get_batch_size(model_name, value):
@@ -136,7 +136,7 @@ def get_lr_func(total_epochs, lr_sched='linear',
 
 def get_customize_lr_callback(*args, **kwargs):
     class CustomizedLearningRateScheduler(Callback):
-        def __init__(self, model, total_step, initial_lr, final_lr, update_interval=100, decay_type="linear"):
+        def __init__(self, model, total_step, initial_lr, final_lr, update_interval=1000, decay_type="linear"):
             self.model = model
             self.total_step = total_step
             self.initial_lr = initial_lr
@@ -201,6 +201,7 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
             model_name,
             compile=False,
             custom_objects={'AdamW': AdamW})
+        model.load_weights(model_name)
     else:
         # initialize the model from scratch
         model_class = {
@@ -232,6 +233,7 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
 
     if weight_decay > 0.:
         _set_l2(model, weight_decay)
+
     if iter_size > 1:
         optimizer = convert_to_accum_optimizer(optimizer, iter_size)
     if use_lookahead:
@@ -248,6 +250,14 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
         tf.logging.warning('"--label_smoothing" not working for '
                            'tensorflow-%s' % tf.__version__)
         loss = 'categorical_crossentropy'
+    from tensorflow.keras.utils import multi_gpu_model
+    try:
+        model = multi_gpu_model(model, gpus=2, cpu_merge=False)
+        # model.load_weights(model_name)
+        print("Training using multiple GPUs..")
+    except Exception as e:
+        print(e)
+        print("Training using single GPU or CPU..")
     model.compile(
         optimizer=optimizer,
         loss=loss,
