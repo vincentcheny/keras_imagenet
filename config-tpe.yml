@@ -1,7 +1,7 @@
 authorName: Vincent
 experimentName: ImageNetTPE
 trialConcurrency: 1
-maxExecDuration: 10h
+maxExecDuration: 40h
 maxTrialNum: 150
 #choice: local, remote, pai
 trainingServicePlatform: local
@@ -16,6 +16,6 @@ tuner:
     #choice: maximize, minimize
     optimize_mode: maximize
 trial:
-  command: python train.py  --iter_size 1 --lr_sched exp  googlenet_bn-model-final.h5
+  command: python train.py  --iter_size 1 --lr_sched exp  googlenet_bn-2gpu-model-final.h5
   codeDir: .
-  gpuNum: 1
+  gpuNum: 2

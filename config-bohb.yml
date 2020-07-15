@@ -1,7 +1,7 @@
 authorName: Vincent
 experimentName: ImageNetBOHB
 trialConcurrency: 1
-maxExecDuration: 20h
+maxExecDuration: 40h
 maxTrialNum: 150
 #choice: local, remote, pai
 trainingServicePlatform: local
@@ -13,15 +13,15 @@ advisor:
   classArgs:
     optimize_mode: maximize
     min_budget: 1
-    max_budget: 9 #27
+    max_budget: 27
     eta: 3
-    min_points_in_model: 4 #7
+    min_points_in_model: 8
     top_n_percent: 15
     num_samples: 64
     random_fraction: 0.0 #0.33
     bandwidth_factor: 3.0
     min_bandwidth: 0.001
 trial:
-  command: python train.py  --iter_size 1 --lr_sched exp  googlenet_bn-model-final.h5
+  command: python train.py  --iter_size 1 --lr_sched exp  googlenet_bn-2gpu-model-final.h5
   codeDir: .
-  gpuNum: 1
+  gpuNum: 2

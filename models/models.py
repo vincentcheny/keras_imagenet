@@ -28,6 +28,8 @@ from .adamw import AdamW
 from .optimizer import convert_to_accum_optimizer
 from .optimizer import convert_to_lookahead_optimizer
 
+from tensorflow.keras.utils import multi_gpu_model
+
 
 IN_SHAPE = (224, 224, 3)  # shape of input image tensor
 NUM_CLASSES = 1000        # number of output classes (1000 for ImageNet)
@@ -193,7 +195,7 @@ def get_optimizer(model_name, optim_name, initial_lr, epsilon=1e-2):
 
 
 def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
-                       use_lookahead, iter_size, weight_decay):
+                       use_lookahead, iter_size, weight_decay,gpus):
     """Build the model to be trained."""
     if model_name.endswith('.h5'):
         # load a saved model
@@ -250,14 +252,14 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
         tf.logging.warning('"--label_smoothing" not working for '
                            'tensorflow-%s' % tf.__version__)
         loss = 'categorical_crossentropy'
-    from tensorflow.keras.utils import multi_gpu_model
+    
     try:
-        model = multi_gpu_model(model, gpus=2, cpu_merge=False)
+        model = multi_gpu_model(model, gpus=gpus, cpu_merge=False)
         # model.load_weights(model_name)
-        print("Training using multiple GPUs..")
+        print("Training using multiple GPUs...")
     except Exception as e:
-        print(e)
-        print("Training using single GPU or CPU..")
+        print(f"[Error] Catch an exception:\n{e}")
+        print("Training using single GPU or CPU...")
     model.compile(
         optimizer=optimizer,
         loss=loss,

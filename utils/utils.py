@@ -19,7 +19,7 @@ def fix_randomness():
 
 
 def config_keras_backend(params=None):
-    print(f"params:{params}")
+    print(f"\nHardware params:{params}")
     """Config tensorflow backend to use less GPU memory."""
     if not params or len(params) < 9:
         print("\nUse default hardware config.")
@@ -38,6 +38,7 @@ def config_keras_backend(params=None):
                     max_folded_constant_in_bytes=params[6],
                     do_function_inlining=params[7],
                     global_jit_level=params[8])))
+        print("\nUse customized hardware config.")
     config.gpu_options.allow_growth = True
     session = tf.compat.v1.Session(config=config)
     tf.keras.backend.set_session(session)

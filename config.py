@@ -20,7 +20,7 @@ config.LOG_DIR = 'logs'
 config.DEFAULT_DATASET_DIR = '/lustre/project/EricLo/cx/imagenet/tf_records'
 
 # Number of parallel works for generating training/validation data
-config.NUM_DATA_WORKERS = 8
+config.NUM_DATA_WORKERS = 12
 
 # Do image data augmentation or not
 config.DATA_AUGMENTATION = False

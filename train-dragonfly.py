@@ -5,9 +5,12 @@ This script is used to train the ImageNet models.
 import numpy as np
 from utils.utils import fix_randomness
 fix_randomness()
+
 import tensorflow as tf
-from tensorflow.keras.callbacks import Callback
-from tensorflow.python.keras import backend as K
+from tensorflow.python.client import device_lib
+NUM_GPU = 2#len([x.name for x in device_lib.list_local_devices() if x.device_type == 'GPU'])
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]=str(list(range(NUM_GPU)))[1:-1].replace(" ", "") # 3 => "0,1,2"
 
 import time
 import argparse
@@ -65,7 +68,7 @@ def train(model_name,
           initial_lr, 
           final_lr,
           weight_decay, 
-          total_img, 
+          epochs, 
           dataset_dir):
     """Prepare data and train the model."""
     
@@ -88,34 +91,40 @@ def train(model_name,
         label_smoothing=label_smoothing,
         use_lookahead=use_lookahead,
         iter_size=iter_size,
-        weight_decay=weight_decay)
+        weight_decay=weight_decay,
+        gpus=NUM_GPU)
+
+    class PrintAccOnEpochEnd(tf.keras.callbacks.Callback):
+        def on_epoch_end(self, epoch, logs=None):
+            print(f"Epoch{epoch} ends with acc:{logs.get('acc')}")
 
     start = time.time()
-    steps = total_img // batch_size
+    NUM_DISTRIBUTE = NUM_GPU if NUM_GPU > 0 else 1
+    steps = 1280000 // batch_size // NUM_DISTRIBUTE
+    print(f"[INFO] Epochs:{epochs} Steps:{steps} Workers:{NUM_DISTRIBUTE} Batch size:{batch_size}")
     his = model.fit(
         x=ds_train,
         steps_per_epoch=steps,
-        callbacks=[get_customize_lr_callback(model,steps,initial_lr,final_lr)],
+        callbacks=[get_lr_func(epochs, lr_sched, initial_lr, final_lr), PrintAccOnEpochEnd()],
         # The following doesn't seem to help in terms of speed.
         # use_multiprocessing=True, workers=4,
-        epochs=1,
+        epochs=epochs,
         verbose=2)
     end = time.time()
-    spent = (end - start) / 3600.0
-    print(spent)
-    print(his.history['acc'][0])
-    return his.history['acc'][0],spent
-
+    fit_time = (end - start) / 3600.0
+    acc = 0. if len(his.history['acc']) < 1 else his.history['acc'][-1]
+    print(f"Keras fit time:{fit_time}, acc:{acc}")
+    return acc, fit_time
 
     # training finished
     # model.save('{}/{}-model-final.h5'.format(config.SAVE_DIR, save_name))
 
 
 def runtime_eval(x):
-    print(x)
+    print(f"Trial config:{x}")
     config_keras_backend(x[6:])
     # config_keras_backend()
-    acc,spent_time = train(model_name, 
+    acc, fit_time = train(model_name, 
                             0, #drop out rate
                             'adam', #optimizer
                             x[0], #epsilon
@@ -127,19 +136,16 @@ def runtime_eval(x):
                             x[2], #init LR
                             x[3], #final LR
                             x[4], #weight decay
-                            x[5], #total_img
+                            x[5], #num_epoch
                             datadir)
     clear_keras_session()
     global final_acc
     final_acc = acc
-    return -float(spent_time)
+    return -float(fit_time)
 
 def acc_eval(x):
   global final_acc
   return float(final_acc)
-
-
-
 
 
 parser = argparse.ArgumentParser(description=DESCRIPTION)
@@ -188,13 +194,13 @@ batch_list = [8,16,32,48,64]
 init_LR_list = [1,5e-1,3e-1,1e-1,7e-2,5e-2,3e-2,1e-2]
 final_LR_list = [5e-4,1e-4,5e-5,1e-5,5e-6,1e-6]
 weight_decay_list = [2e-3,7e-4,2e-4,7e-5,2e-5]
-total_img_list = [563200,640000,768000]
+epoch_list = [1,2,3]
 
 
 
 #hardware para
-inter_list = [1,2,3,4]
-intra_list = [2,4,6,8,10,12]
+inter_list = [2,3,4]
+intra_list = [2,4,6]
 infer_shapes_list = [True,False]
 place_pruned_graph_list = [True,False]
 enable_bfloat16_sendrecv_list = [True,False]
@@ -209,7 +215,7 @@ domain_vars = [{'type': 'discrete_numeric', 'items': epsilon_list},
                 {'type': 'discrete_numeric', 'items': init_LR_list},
                 {'type': 'discrete_numeric', 'items': final_LR_list},
                 {'type': 'discrete_numeric', 'items': weight_decay_list},
-                {'type': 'discrete_numeric', 'items': total_img_list},
+                {'type': 'discrete_numeric', 'items': epoch_list},
                 {'type': 'discrete_numeric', 'items': inter_list},
                 {'type': 'discrete_numeric', 'items': intra_list},
                 {'type': 'discrete', 'items': infer_shapes_list},
@@ -230,19 +236,12 @@ dragonfly_args = [
 options = load_options(dragonfly_args)
 config_params = {'domain': domain_vars}
 config = load_config(config_params)
-max_num_evals = 60 * 60 * 10
+max_num_evals = 60 * 60 * 40
 moo_objectives = [runtime_eval, acc_eval]
 pareto_opt_vals, pareto_opt_pts, history = multiobjective_maximise_functions(moo_objectives, config.domain,max_num_evals,capital_type='realtime',config=config,options=options)
-f = open("./googlenet_bn-1gpu-dragonfly-10h-output.log","w+")
+f = open("./googlenet_bn-dragonfly-40h-2gpu-output.log","w+")
 print(pareto_opt_pts,file=f)
 print("\n",file=f)
 print(pareto_opt_vals,file=f)
 print("\n",file=f)
 print(history,file=f)
-
-
-
-
-
-
-
