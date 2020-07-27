@@ -83,15 +83,16 @@ def _parse_fn(example_serialized, is_training):
         image = resize_and_rescale_image(image, 224, 224)
     # The label in the tfrecords is 1~1000 (0 not used).
     # So I think the minus 1 (of class label) is needed below.
-    label = tf.one_hot(parsed['image/class/label'] - 1, 1000, dtype=tf.float32)
+    # label = tf.one_hot(parsed['image/class/label'] - 1, 1000, dtype=tf.float32)
+    # label = tf.one_hot(parsed['image/class/label'] - 1, 300, dtype=tf.float32) # 300 modification
+    label = tf.one_hot(parsed['image/class/label'] - 1, 500, dtype=tf.float32) #500 modification
     return (image, label)
 
 
 def get_dataset(tfrecords_dir, subset, batch_size):
     """Read TFRecords files and turn them into a TFRecordDataset."""
-    # files = tf.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
-    files = tf.compat.v1.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
-    shards = tf.data.Dataset.from_tensor_slices(files)
+    files = tf.matching_files(os.path.join(tfrecords_dir, '%s-*' % subset))
+    shards = tf.data.Dataset.from_tensor_slices(files) # return type: DatasetV1Adapter
     shards = shards.shuffle(tf.cast(tf.shape(files)[0], tf.int64),seed=0)
     shards = shards.repeat()
     dataset = shards.interleave(tf.data.TFRecordDataset, cycle_length=4)

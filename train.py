@@ -2,14 +2,18 @@
 
 This script is used to train the ImageNet models.
 """
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 
 import numpy as np
 from utils.utils import fix_randomness
 fix_randomness()
 from tensorflow.python.client import device_lib
 NUM_GPU = len([x.name for x in device_lib.list_local_devices() if x.device_type == 'GPU'])
-import os
+# NUM_GPU = 1
+
 os.environ["CUDA_VISIBLE_DEVICES"]=str(list(range(NUM_GPU)))[1:-1].replace(" ", "") # 3 => "0,1,2"
+
 import time
 import argparse
 
@@ -66,44 +70,58 @@ def train(model_name, dropout_rate, optim_name, epsilon,
     weight_decay = get_weight_decay(model_name, weight_decay)
 
     # get training and validation data
-    ds_train = get_dataset(dataset_dir, 'train', batch_size)
-    ds_valid = get_dataset(dataset_dir, 'validation', batch_size)
+    ds_train = get_dataset(dataset_dir, 'train', batch_size) # 300 modification
+    ds_valid = get_dataset(dataset_dir, 'validation', batch_size) # 300 modification
+    # ds_train = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_train/", 'train', batch_size) # 1000 modification
+    # ds_valid = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_val/", 'validation', batch_size) # 1000 modification
 
-    # build model and do training
-    model = get_training_model(
-        model_name=model_name,
-        dropout_rate=dropout_rate,
-        optimizer=optimizer,
-        label_smoothing=label_smoothing,
-        use_lookahead=use_lookahead,
-        iter_size=iter_size,
-        weight_decay=weight_decay,
-        gpus=NUM_GPU)
-    
+    mirrored_strategy = tf.distribute.MirroredStrategy()
+    with mirrored_strategy.scope():
+        model = get_training_model(
+            model_name=model_name,
+            dropout_rate=dropout_rate,
+            optimizer=optimizer,
+            label_smoothing=label_smoothing,
+            use_lookahead=use_lookahead,
+            iter_size=iter_size,
+            weight_decay=weight_decay,
+            gpus=NUM_GPU)
+    # model = tf.keras.models.load_model("./saves/keras_save")
 
-    class PrintAccOnEpochEnd(tf.keras.callbacks.Callback):
+    class PrintAcc(tf.keras.callbacks.Callback):
         def on_epoch_end(self, epoch, logs=None):
-            nni.report_intermediate_result(logs.get('acc'))
-            print(f"Epoch{epoch} ends with acc:{logs.get('acc')}")
-
+            print(f"Epoch{epoch+1} acc#{logs.get('acc')}# val_acc#{logs.get('val_acc')} val_top_k_categorical_accuracy#{logs.get('val_top_k_categorical_accuracy')}")
+  
 
     NUM_DISTRIBUTE = NUM_GPU if NUM_GPU > 0 else 1
-    steps = 1280000 // batch_size // NUM_DISTRIBUTE
-    print(f"[INFO] Epochs:{epochs} Steps:{steps} Workers:{NUM_DISTRIBUTE} Batch size:{batch_size}")
+    # steps = int(1281167  / batch_size / NUM_DISTRIBUTE)
+    # train_steps = int(1281167 / batch_size) # 1000 classes
+    # val_steps = int(50000 / batch_size) # 1000 classes
+    # train_steps = int(383690 / batch_size) # 300 modification
+    # val_steps = int(15000 / batch_size) # 300 modification
+    train_steps = int(642289 / batch_size) # 500 modification
+    val_steps = int(25000 / batch_size) # 500 modification
+    # steps = int(192439 / batch_size / NUM_DISTRIBUTE) # 600 modification
+    print(f"[INFO] Total Epochs:{epochs} Train Steps:{train_steps} Validate Steps: {val_steps} Workers:{NUM_DISTRIBUTE} Batch size:{batch_size}")
     his = model.fit(
         x=ds_train,
-        steps_per_epoch=steps,
-        callbacks=[get_lr_func(epochs, lr_sched, initial_lr, final_lr), PrintAccOnEpochEnd()],
+        steps_per_epoch=train_steps,
+        validation_data=ds_valid,
+        validation_steps=val_steps,
+        callbacks=[get_lr_func(epochs, lr_sched, initial_lr, final_lr, NUM_GPU)],
         # The following doesn't seem to help in terms of speed.
         # use_multiprocessing=True, workers=4,
         epochs=epochs,
-        verbose=1)
+        verbose=2)
     
-    final_acc = 0. if len(his.history['acc']) < 1 else his.history['acc'][-1]
+    # print(his.history)
+    final_acc = 0. if len(his.history['val_top_k_categorical_accuracy']) < 1 else his.history['val_top_k_categorical_accuracy'][-1]
     print(f"Final acc:{final_acc}")
     nni.report_final_result(final_acc)
     # training finished
-    # model.save('googlenet_bn-2gpu-model-final.h5')
+    # keras_model_path = "./saves/keras_save_300"
+    # model.save(keras_model_path)
+    # model.save('googlenet_bn-4gpu-model.h5')
 
 
 def main():
@@ -136,10 +154,10 @@ def main():
     # os.makedirs(config.LOG_DIR, exist_ok=True)
     config_keras_backend()
     # check if running hyperband
-    epochs_to_run = params["NUM_EPOCH"] if 'TRIAL_BUDGET' not in params.keys() else params["TRIAL_BUDGET"]%4 # valid NUM_EPOCH:{1,2,3}
+    epochs_to_run = params["NUM_EPOCH"] if 'TRIAL_BUDGET' not in params.keys() else params["TRIAL_BUDGET"] # valid NUM_EPOCH:{1,2,3}
     train(args.model,
         0, #drop out rate
-        'adam', #optimizer
+        params["OPTIMIZER"],
         params["EPSILON"],
         args.label_smoothing, 
         args.use_lookahead,
@@ -156,16 +174,17 @@ def main():
 
 def get_default_params():
     return {
-        "EPSILON":0.3,
-        "BATCH_SIZE":64,
-        "INIT_LR":0.5,
+        "EPSILON":0.7,
+        "BATCH_SIZE":48*NUM_GPU,
+        "OPTIMIZER": "adam",
+        "INIT_LR":0.3,
         "FINAL_LR":1e-06,
         'WEIGHT_DECAY':7e-05,
-        'NUM_EPOCH':1
+        'NUM_EPOCH':90
     }
 
 if __name__ == '__main__':
-    tf.logging.set_verbosity(tf.logging.ERROR)
+    tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
     params = get_default_params()
     tuned_params = nni.get_next_parameter()
     params.update(tuned_params)

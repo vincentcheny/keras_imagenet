@@ -32,8 +32,9 @@ from tensorflow.keras.utils import multi_gpu_model
 
 
 IN_SHAPE = (224, 224, 3)  # shape of input image tensor
-NUM_CLASSES = 1000        # number of output classes (1000 for ImageNet)
-
+# NUM_CLASSES = 300        # number of output classes (1000 for ImageNet) # 300 modification
+# NUM_CLASSES = 1000
+NUM_CLASSES = 500 #500 modification
 
 def _set_l2(model, weight_decay):
     """Add L2 regularization into layers with weights
@@ -101,7 +102,7 @@ def get_final_lr(model_name, value):
 
 
 def get_lr_func(total_epochs, lr_sched='linear',
-                initial_lr=1e-2, final_lr=1e-5):
+                initial_lr=1e-2, final_lr=1e-5, NUM_GPU=1):
     """Returns a learning decay function for training.
 
     2 types of lr_sched are supported: 'linear' or 'exp' (exponential).
@@ -199,11 +200,14 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
     """Build the model to be trained."""
     if model_name.endswith('.h5'):
         # load a saved model
+        # model = tf.keras.models.load_model(
+        #     model_name,
+        #     compile=False,
+        #     custom_objects={'AdamW': AdamW})
+        # model.load_weights(model_name)
         model = tf.keras.models.load_model(
-            model_name,
-            compile=False,
-            custom_objects={'AdamW': AdamW})
-        model.load_weights(model_name)
+             "./saves/keras_save",
+             compile=False)
     else:
         # initialize the model from scratch
         model_class = {
@@ -219,7 +223,7 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
             'osnet': OSNet,
         }[model_name]
         backbone = model_class(
-            input_shape=IN_SHAPE, include_top=False, weights=None)
+            input_shape=IN_SHAPE, include_top=False, weights=None, classes=NUM_CLASSES)
 
         # Add a Dropout layer before the final Dense output
         x = tf.keras.layers.GlobalAveragePooling2D()(backbone.output)
@@ -254,16 +258,16 @@ def get_training_model(model_name, dropout_rate, optimizer, label_smoothing,
         loss = 'categorical_crossentropy'
     
     try:
-        model = multi_gpu_model(model, gpus=gpus, cpu_merge=False)
+        # model = multi_gpu_model(model, gpus=gpus, cpu_merge=False)
         # model.load_weights(model_name)
-        print("Training using multiple GPUs...")
+        print(f"Training using {gpus} GPUs...")
     except Exception as e:
         print(f"[Error] Catch an exception:\n{e}")
         print("Training using single GPU or CPU...")
     model.compile(
         optimizer=optimizer,
         loss=loss,
-        metrics=['accuracy'])
+        metrics=['accuracy', 'top_k_categorical_accuracy'])
     # print(model.summary())
 
     return model

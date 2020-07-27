@@ -2,14 +2,17 @@
 
 This script is used to train the ImageNet models.
 """
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # disable redundant message
+
 import numpy as np
 from utils.utils import fix_randomness
 fix_randomness()
 
 import tensorflow as tf
+tf.logging.set_verbosity(tf.logging.ERROR)
 from tensorflow.python.client import device_lib
-NUM_GPU = 2#len([x.name for x in device_lib.list_local_devices() if x.device_type == 'GPU'])
-import os
+NUM_GPU = 4 # len([x.name for x in device_lib.list_local_devices() if x.device_type == 'GPU'])
 os.environ["CUDA_VISIBLE_DEVICES"]=str(list(range(NUM_GPU)))[1:-1].replace(" ", "") # 3 => "0,1,2"
 
 import time
@@ -69,51 +72,70 @@ def train(model_name,
           final_lr,
           weight_decay, 
           epochs, 
-          dataset_dir):
+          dataset_dir,
+          cross_device_ops,
+          num_packs,
+          tf_gpu_thread_mode):
     """Prepare data and train the model."""
-    
+    if tf_gpu_thread_mode in ["global", "gpu_private", "gpu_shared"]:
+        os.environ['TF_GPU_THREAD_MODE'] = tf_gpu_thread_mode
+
     batch_size   = get_batch_size(model_name, batch_size)
     iter_size    = get_iter_size(model_name, iter_size)
     initial_lr   = get_initial_lr(model_name, initial_lr)
     final_lr     = get_final_lr(model_name, final_lr)
     optimizer    = get_optimizer(model_name, optim_name, initial_lr, epsilon)
     weight_decay = get_weight_decay(model_name, weight_decay)
-
+    
     # get training and validation data
-    ds_train = get_dataset(dataset_dir, 'train', batch_size)
-    ds_valid = get_dataset(dataset_dir, 'validation', batch_size)
+    ds_train = get_dataset(dataset_dir, 'train', batch_size) # 300 modification
+    ds_valid = get_dataset(dataset_dir, 'validation', batch_size) # 300 modification
+    # ds_train = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_train/", 'train', batch_size) # 1000 modification
+    # ds_valid = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_val/", 'validation', batch_size) # 1000 modification
+    if cross_device_ops == "HierarchicalCopyAllReduce":
+        mirrored_strategy = tf.distribute.MirroredStrategy(cross_device_ops=tf.distribute.HierarchicalCopyAllReduce(num_packs=num_packs))
+    elif cross_device_ops == "NcclAllReduce":
+        mirrored_strategy = tf.distribute.MirroredStrategy(cross_device_ops=tf.distribute.NcclAllReduce(num_packs=num_packs))
+    else:
+        mirrored_strategy = tf.distribute.MirroredStrategy()
+    with mirrored_strategy.scope():
+        model = get_training_model(
+            model_name=model_name,
+            dropout_rate=dropout_rate,
+            optimizer=optimizer,
+            label_smoothing=label_smoothing,
+            use_lookahead=use_lookahead,
+            iter_size=iter_size,
+            weight_decay=weight_decay,
+            gpus=NUM_GPU)
 
-    # build model and do training
-    model = get_training_model(
-        model_name=model_name,
-        dropout_rate=dropout_rate,
-        optimizer=optimizer,
-        label_smoothing=label_smoothing,
-        use_lookahead=use_lookahead,
-        iter_size=iter_size,
-        weight_decay=weight_decay,
-        gpus=NUM_GPU)
-
-    class PrintAccOnEpochEnd(tf.keras.callbacks.Callback):
+    class PrintAcc(tf.keras.callbacks.Callback):
         def on_epoch_end(self, epoch, logs=None):
-            print(f"Epoch{epoch} ends with acc:{logs.get('acc')}")
+            print(f"Epoch{epoch+1} acc#{logs.get('acc')}# val_acc#{logs.get('val_acc')} val_top_k_categorical_accuracy#{logs.get('val_top_k_categorical_accuracy')}")
 
+            
     start = time.time()
     NUM_DISTRIBUTE = NUM_GPU if NUM_GPU > 0 else 1
-    steps = 1280000 // batch_size // NUM_DISTRIBUTE
-    print(f"[INFO] Epochs:{epochs} Steps:{steps} Workers:{NUM_DISTRIBUTE} Batch size:{batch_size}")
+    # train_steps = int(1281167 / batch_size) # 1000 classes
+    # val_steps = int(50000 / batch_size) # 1000 classes
+    train_steps = int(383690 / batch_size) # 300 modification
+    val_steps = int(15000 / batch_size) # 300 modification
+    print(f"[INFO] Total Epochs:{epochs} Train Steps:{train_steps} Validate Steps: {val_steps} Workers:{NUM_DISTRIBUTE} Batch size:{batch_size}")
     his = model.fit(
         x=ds_train,
-        steps_per_epoch=steps,
-        callbacks=[get_lr_func(epochs, lr_sched, initial_lr, final_lr), PrintAccOnEpochEnd()],
+        steps_per_epoch=train_steps,
+        validation_data=ds_valid,
+        validation_steps=val_steps,
+        callbacks=[PrintAcc(), get_lr_func(epochs, lr_sched, initial_lr, final_lr, NUM_GPU)],
         # The following doesn't seem to help in terms of speed.
         # use_multiprocessing=True, workers=4,
         epochs=epochs,
-        verbose=2)
+        verbose=1)
+    print("[DEBUG] finish keras fit")
     end = time.time()
     fit_time = (end - start) / 3600.0
-    acc = 0. if len(his.history['acc']) < 1 else his.history['acc'][-1]
-    print(f"Keras fit time:{fit_time}, acc:{acc}")
+    acc = 0. if len(his.history['val_top_k_categorical_accuracy']) < 1 else his.history['val_top_k_categorical_accuracy'][-1]
+    print(f"Keras fit time:{fit_time}, val_top_k_categorical_accuracy:{acc}")
     return acc, fit_time
 
     # training finished
@@ -122,11 +144,11 @@ def train(model_name,
 
 def runtime_eval(x):
     print(f"Trial config:{x}")
-    config_keras_backend(x[6:])
-    # config_keras_backend()
+    config_keras_backend(x[6:15])
+    
     acc, fit_time = train(model_name, 
                             0, #drop out rate
-                            'adam', #optimizer
+                            x[15], #optimizer
                             x[0], #epsilon
                             label_smoothing, 
                             use_lookahead,
@@ -137,7 +159,11 @@ def runtime_eval(x):
                             x[3], #final LR
                             x[4], #weight decay
                             x[5], #num_epoch
-                            datadir)
+                            datadir,
+                            x[16],
+                            x[17],
+                            x[18])
+    print("###################################Finish hardware config4##########################")
     clear_keras_session()
     global final_acc
     final_acc = acc
@@ -191,11 +217,12 @@ final_acc = 0.0
 #model para
 epsilon_list = [0.1,0.3,0.5,0.7,1.0]
 batch_list = [8,16,32,48,64]
+batch_list = [i*NUM_GPU for i in batch_list]
 init_LR_list = [1,5e-1,3e-1,1e-1,7e-2,5e-2,3e-2,1e-2]
 final_LR_list = [5e-4,1e-4,5e-5,1e-5,5e-6,1e-6]
 weight_decay_list = [2e-3,7e-4,2e-4,7e-5,2e-5]
 epoch_list = [1,2,3]
-
+optimizer_list = ['sgd', 'adam', 'rmsprop']
 
 
 #hardware para
@@ -208,6 +235,10 @@ do_common_subexpression_elimination_list = [True,False]
 max_folded_constant_list = [2,4,6,8,10]
 do_function_inlining_list = [True,False]
 global_jit_level_list = [0,1,2]
+
+cross_device_ops_list = ["HierarchicalCopyAllReduce"]#, "NcclAllReduce"]
+num_packs_list = [0,1,2,3,4,5]
+tf_gpu_thread_mode_list = ["gpu_private"]#, "global", "gpu_shared"]
 
 
 domain_vars = [{'type': 'discrete_numeric', 'items': epsilon_list},
@@ -224,7 +255,11 @@ domain_vars = [{'type': 'discrete_numeric', 'items': epsilon_list},
                 {'type': 'discrete', 'items': do_common_subexpression_elimination_list},
                 {'type': 'discrete_numeric', 'items': max_folded_constant_list},
                 {'type': 'discrete', 'items': do_function_inlining_list},
-                {'type': 'discrete_numeric', 'items': global_jit_level_list}
+                {'type': 'discrete_numeric', 'items': global_jit_level_list},
+                {'type': 'discrete', 'items': optimizer_list},
+                {'type': 'discrete', 'items': cross_device_ops_list},
+                {'type': 'discrete_numeric', 'items': num_packs_list},
+                {'type': 'discrete', 'items': tf_gpu_thread_mode_list}
                 ]
 
 dragonfly_args = [ 

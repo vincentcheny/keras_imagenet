@@ -88,11 +88,11 @@ import six
 import tensorflow as tf
 
 
-tf.app.flags.DEFINE_string('train_directory', '/tmp/',
+tf.app.flags.DEFINE_string('train_directory', '/lustre/project/EricLo/cx/imagenet/train/',
                            'Training data directory')
-tf.app.flags.DEFINE_string('validation_directory', '/tmp/',
+tf.app.flags.DEFINE_string('validation_directory', '/lustre/project/EricLo/cx/imagenet/val/',
                            'Validation data directory')
-tf.app.flags.DEFINE_string('output_directory', '/tmp/',
+tf.app.flags.DEFINE_string('output_directory', '/lustre/project/EricLo/cx/imagenet/imagenet_500classes/',
                            'Output data directory')
 
 tf.app.flags.DEFINE_integer('train_shards', 1024,
@@ -112,7 +112,8 @@ tf.app.flags.DEFINE_integer('num_threads', 4,
 # each synset contained in the file to an integer (based on the alphabetical
 # ordering). See below for details.
 tf.app.flags.DEFINE_string('labels_file',
-                           'imagenet_lsvrc_2015_synsets.txt',
+                          #  'imagenet_lsvrc_2015_synsets.txt',
+                          'imagenet_lsvrc_2015_synsets_500.txt', # 500 modification
                            'Labels file')
 
 # This file containing mapping from synset to human-readable label.
