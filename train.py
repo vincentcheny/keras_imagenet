@@ -74,8 +74,8 @@ def train(model_name, dropout_rate, optim_name, epsilon,
     ds_valid = get_dataset(dataset_dir, 'validation', batch_size) # 300 modification
     # ds_train = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_train/", 'train', batch_size) # 1000 modification
     # ds_valid = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_val/", 'validation', batch_size) # 1000 modification
-
-    mirrored_strategy = tf.distribute.MirroredStrategy()
+    mirrored_strategy = tf.distribute.MirroredStrategy(cross_device_ops=tf.distribute.NcclAllReduce(num_packs=2))
+    # mirrored_strategy = tf.distribute.MirroredStrategy()
     with mirrored_strategy.scope():
         model = get_training_model(
             model_name=model_name,

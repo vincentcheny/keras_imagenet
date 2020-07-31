@@ -36,6 +36,8 @@ from dragonfly import maximise_function,minimise_function
 from dragonfly.utils.option_handler import get_option_specs, load_options
 # import warnings
 # warnings.simplefilter("ignore", category=DeprecationWarning)
+import config as config1
+config1.num_trial = 0
 
 DESCRIPTION = """For example:
 $ python3 train.py --dataset_dir  ${HOME}/data/ILSVRC2012/tfrecords \
@@ -91,7 +93,6 @@ def train(model_name,
     ds_valid = get_dataset(dataset_dir, 'validation', batch_size) # 300 modification
     # ds_train = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_train/", 'train', batch_size) # 1000 modification
     # ds_valid = get_dataset("/lustre/project/EricLo/cx/imagenet/imagenet_1000classes_val/", 'validation', batch_size) # 1000 modification
-    cross_device_ops = "HierarchicalCopyAllReduce"
     if cross_device_ops == "HierarchicalCopyAllReduce":
         mirrored_strategy = tf.distribute.MirroredStrategy(cross_device_ops=tf.distribute.HierarchicalCopyAllReduce(num_packs=num_packs))
     elif cross_device_ops == "NcclAllReduce":
@@ -138,8 +139,6 @@ def train(model_name,
     fit_time = (end - start) / 3600.0
     acc = 0. if len(his.history['val_top_k_categorical_accuracy']) < 1 else his.history['val_top_k_categorical_accuracy'][-1]
     print(f"[TRIAL END] time: {fit_time} {his.history}")
-    # acc = 0.2
-    # fit_time = 4
     return acc, fit_time
 
     # training finished
@@ -148,9 +147,20 @@ def train(model_name,
 
 def runtime_eval(x):
     print(f"Trial config:{x}")
-
-
     config_keras_backend(x[6:15])
+
+    global final_acc
+    config1.num_trial += 1
+    print(config1.num_trial, final_acc)
+    
+    if config1.num_trial == 0:
+        acc = 0.4
+        final_acc = acc
+        return -float(0.2)
+    elif config1.num_trial == 1:
+        acc = 0.5
+        final_acc = acc
+        return -float(0.6)
     acc, fit_time = train(model_name, 
                             0, #drop out rate
                             x[15], #optimizer
@@ -168,16 +178,25 @@ def runtime_eval(x):
                             x[16],
                             x[17],
                             x[18])
-    print(f"NUM_TRIAL in runtime2: {num_trial}, {acc} {fit_time}")
+    print(f"NUM_TRIAL in runtime2: {config1.num_trial}, {acc} {fit_time}")
     clear_keras_session()
-    global final_acc
+    # global final_acc
     final_acc = acc
     return -float(fit_time)
 
 def acc_eval(x):
+    print(f"NUM_TRIAL in eval: {config1.num_trial}")
+    if config1.num_trial == 0:
+        config1.num_trial += 1
+        print(f"NUM_TRIAL in eval2: {config1.num_trial}")
+        return 7.745438137319353
+    elif config1.num_trial == 1:
+        config1.num_trial += 1
+        print(f"NUM_TRIAL in eval2: {config1.num_trial}")
+        return 11.477242516875267      
+    config1.num_trial += 1
     global final_acc
     return float(final_acc)
-
 
 
 parser = argparse.ArgumentParser(description=DESCRIPTION)
@@ -217,20 +236,20 @@ if args.use_lookahead and args.iter_size > 1:
 # os.makedirs(config.SAVE_DIR, exist_ok=True)
 # os.makedirs(config.LOG_DIR, exist_ok=True)
 
-# num_trial = 0
+
 
 #dragonfly part
 final_acc = 0.0
 
 #model para
-epsilon_list = [0.5,0.7,1.0,0.1,0.3]
-batch_list = [32,48,8,16,64]
+epsilon_list = [0.1,0.3,0.5,0.7,1.0]
+batch_list = [8,16,32,48,64]
 batch_list = [i*NUM_GPU for i in batch_list]
-init_LR_list = [1e-1,7e-2,5e-2,3e-2,1,5e-1,3e-1,1e-2]
+init_LR_list = [1,5e-1,3e-1,1e-1,7e-2,5e-2,3e-2,1e-2]
 final_LR_list = [5e-4,1e-4,5e-5,1e-5,5e-6,1e-6]
 weight_decay_list = [2e-3,7e-4,2e-4,7e-5,2e-5]
-epoch_list = [25, 26, 27, 15, 16, 17, 18, 19, 28, 29, 30, 20, 21, 22, 23, 24]
-optimizer_list = ['adam', 'sgd', 'rmsprop']
+epoch_list = [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+optimizer_list = ['sgd', 'adam', 'rmsprop']
 
 
 #hardware para
@@ -244,9 +263,9 @@ max_folded_constant_list = [2,4,6,8,10]
 do_function_inlining_list = [True,False]
 global_jit_level_list = [0,1,2]
 
-cross_device_ops_list = ["NcclAllReduce", "HierarchicalCopyAllReduce"]
-num_packs_list = [0,3,4,5,1,2]
-tf_gpu_thread_mode_list = ["global", "gpu_private", "gpu_shared"]
+cross_device_ops_list = ["HierarchicalCopyAllReduce", "NcclAllReduce"]
+num_packs_list = [0,1,2,3,4,5]
+tf_gpu_thread_mode_list = ["gpu_private", "global", "gpu_shared"]
 
 
 domain_vars = [{'type': 'discrete_numeric', 'items': epsilon_list},

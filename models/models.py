@@ -152,7 +152,7 @@ def get_customize_lr_callback(*args, **kwargs):
                 if not hasattr(self.model.optimizer, 'lr'):
                     raise ValueError('Optimizer must have a "lr" attribute.')
                 try:  # new API
-                    lr = float(K.get_value(self.model.optimizer.lr))
+                    lr = float(K.get_value(self.model.optimizer.learning_rate))
                     if batch < 100:
                         lr = self.initial_lr
                     else:
@@ -166,7 +166,7 @@ def get_customize_lr_callback(*args, **kwargs):
                 except TypeError:  # Support for old API for backward compatibility
                     lr = self.initial_lr
                     print(f"There is a TypeError: {TypeError}")
-                K.set_value(self.model.optimizer.lr, lr)
+                K.set_value(self.model.optimizer.learning_rate, lr)
 
     return CustomizedLearningRateScheduler(*args, **kwargs)
 
